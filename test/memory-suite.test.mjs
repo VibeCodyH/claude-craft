@@ -46,6 +46,29 @@ test("bench floors hold: preflight never false-fires, recall above floor", () =>
   assert.ok(mRecalled / mOnTopic >= 0.75, `memcheck recall floor: ${mRecalled}/${mOnTopic}`);
 });
 
+test("protected-repo guard denies pushes, allows everything else", () => {
+  const guard = (command, cwd = "/home/dev/elsewhere") =>
+    execFileSync(process.execPath, [join(TOOLS, "protected-repo-guard.mjs")], {
+      encoding: "utf8",
+      input: JSON.stringify({ tool_input: { command }, cwd }),
+      env: { ...process.env, PROTECTED_REPOS_FILE: join(here, "fixtures", "protected-repos.json") },
+    });
+  const denied = (out) => out.includes('"permissionDecision":"deny"');
+
+  assert.ok(denied(guard("git push", "/opt/clones/website")), "push from inside the clone");
+  assert.ok(denied(guard("cd /opt/clones/website && git push origin main")), "cd chain into the clone");
+  assert.ok(denied(guard("git -C /opt/clones/website push")), "-C into the clone");
+  assert.ok(denied(guard("gh pr create -R acme/website --title x")), "gh pr create by slug");
+  assert.ok(denied(guard("git push git@github.com:acme/website.git main")), "push by URL");
+  assert.ok(denied(guard("(cd /opt/clones/website && git push)")), "subshell-grouped cd chain");
+  assert.ok(denied(guard("gh pr -R acme/website create --title x")), "gh flag between group and verb");
+  assert.ok(denied(guard(`git -C "/opt/clones/website" push`, "/opt")), "quoted -C path");
+
+  assert.equal(guard("git push", "/opt/clones/other-repo"), "", "push elsewhere stays allowed");
+  assert.equal(guard("git commit -m wip", "/opt/clones/website"), "", "local commit stays allowed");
+  assert.equal(guard("gh api repos/acme/website/issues -X POST -f title=bug"), "", "issue lane stays open");
+});
+
 test("memory-staleness flags drift and stays silent when fresh", () => {
   const dir = mkdtempSync(join(tmpdir(), "mem-stale-"));
   try {

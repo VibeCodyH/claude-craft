@@ -1,7 +1,8 @@
 # claude-craft
 
-Tooling for [Claude Code](https://claude.com/claude-code)'s file-based memory: a linter, a
-pre-flight recall hook, an agent-invokable self-check, and hash-pinned staleness detection.
+Tooling for [Claude Code](https://claude.com/claude-code): memory hygiene (a linter, a pre-flight
+recall hook, an agent-invokable self-check, hash-pinned staleness detection), a config-driven
+protected-repo push guard, and a delegation skill for orchestrating cheaper executor CLIs.
 
 Claude Code's auto-memory is a directory of markdown files plus a `MEMORY.md` index. It's great —
 until it rots. Links dangle after renames, the index drifts from the files, near-duplicate
@@ -87,6 +88,48 @@ curated store of platform facts works better than it has any right to.
 
 **Domain acronyms** — the scorer drops tokens under 4 chars except a keep-list (`llm ssh api db …`).
 Extend it for your domain: `CLAUDE_MEM_KEEP_SHORT="k8s rds sqs"`.
+
+## Protected-repo push guard
+
+`tools/protected-repo-guard.mjs` enforces "the agent may work on this clone locally but NEVER
+pushes it" — useful when Claude works on an employer's or teammate's repo where a human must run
+every push and open every PR. A prose rule in CLAUDE.md can be argued with; a PreToolUse deny
+can't. It catches `git push` (by cwd, `cd` chains, `-C`, slug, or URL), `gh pr create|merge`,
+`gh repo sync`, and `gh api` writes — while leaving local commits, branches, and the
+issue/comment lane open.
+
+Configure `~/.claude/protected-repos.json`:
+
+```json
+[{ "slug": "some-org/their-repo", "dir": "/abs/path/to/local/clone" }]
+```
+
+and add it as a `PreToolUse` hook on Bash in `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "node ~/.claude/tools/protected-repo-guard.mjs" }] }
+    ]
+  }
+}
+```
+
+Fail-open by design: no config or a broken config protects nothing rather than bricking every
+Bash call. The guard is belt-and-suspenders over your prose rule, not a replacement for it.
+
+## Delegation skill
+
+`skills/delegate/` teaches the agent a fixed division of labor: **Claude plans and reviews,
+cheaper executor CLIs (Codex, Copilot, Gemini, Mistral, Grok) do the mechanical building.**
+It encodes the trigger test (what to delegate vs keep), the spec → delegate → review loop, and
+field-tested gotchas — headless sandbox flags that silently no-op, reviewer models that inflate
+findings, refusal profiles that differ by vendor. Install:
+
+```bash
+cp -r skills/delegate ~/.claude/skills/
+```
 
 ## Measured signal/noise
 
