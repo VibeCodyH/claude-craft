@@ -9,7 +9,7 @@
 //
 // FAIL-SAFE: exit 0 always, output nothing on error/no-match. NEVER exit 2
 // (that would reject the user's prompt).
-import { resolveMemoryDir, loadMemories, scoreMemories } from "./memory-lib.mjs";
+import { resolveMemoryDir, loadMemories, scoreMemories, gatePreflight } from "./memory-lib.mjs";
 
 let raw = "";
 process.stdin.setEncoding("utf8");
@@ -24,13 +24,8 @@ process.stdin.on("end", () => {
     const memories = loadMemories(resolveMemoryDir(cwd));
     if (!memories.length) return done();
 
-    const results = scoreMemories(prompt, memories);
-    const top = results[0];
-    // Only fire on a strong top match; show matches clustered near the top.
-    if (!top || top.score < 7) return done();
-    const shown = results
-      .filter((r) => r.score >= Math.max(7, top.score * 0.6))
-      .slice(0, 3);
+    const shown = gatePreflight(scoreMemories(prompt, memories));
+    if (!shown.length) return done();
 
     let out =
       "📌 Pre-flight memory check — prior notes relevant to this request " +

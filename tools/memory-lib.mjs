@@ -161,6 +161,17 @@ export function tokenize(text) {
   return new Set(toks);
 }
 
+/** Preflight gate: fire only on a strong top match, then show the matches
+ *  clustered near the top. Shared by the hook and the bench runner so the
+ *  measured behavior is the shipped behavior. */
+export function gatePreflight(results, { minScore = 7, cluster = 0.6, max = 3 } = {}) {
+  const top = results[0];
+  if (!top || top.score < minScore) return [];
+  return results
+    .filter((r) => r.score >= Math.max(minScore, top.score * cluster))
+    .slice(0, max);
+}
+
 /**
  * Score memories against a query string. name/description hits weigh more
  * than body hits. Returns matches sorted desc, each { mem, score, hits }.

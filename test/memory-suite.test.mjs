@@ -36,6 +36,16 @@ test("memcheck stays quiet off-topic", () => {
   assert.match(out, /no strong prior memory/);
 });
 
+test("bench floors hold: preflight never false-fires, recall above floor", () => {
+  const out = run(join("..", "test", "bench", "run-bench.mjs"));
+  const grab = (tier) => out.match(new RegExp(`${tier}\\s+recall (\\d+)/(\\d+) \\(\\d+%\\) · false-fire (\\d+)/`)).slice(1).map(Number);
+  const [pRecalled, pOnTopic, pFires] = grab("preflight");
+  assert.equal(pFires, 0, "preflight must stay silent off-topic");
+  assert.ok(pRecalled / pOnTopic >= 0.5, `preflight recall floor: ${pRecalled}/${pOnTopic}`);
+  const [mRecalled, mOnTopic] = grab("memcheck");
+  assert.ok(mRecalled / mOnTopic >= 0.75, `memcheck recall floor: ${mRecalled}/${mOnTopic}`);
+});
+
 test("memory-staleness flags drift and stays silent when fresh", () => {
   const dir = mkdtempSync(join(tmpdir(), "mem-stale-"));
   try {

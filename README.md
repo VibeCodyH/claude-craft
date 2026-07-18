@@ -88,6 +88,26 @@ curated store of platform facts works better than it has any right to.
 **Domain acronyms** — the scorer drops tokens under 4 chars except a keep-list (`llm ssh api db …`).
 Extend it for your domain: `CLAUDE_MEM_KEEP_SHORT="k8s rds sqs"`.
 
+## Measured signal/noise
+
+Memory-repo benchmarks (LoCoMo, LongMemEval) measure QA accuracy over long chat histories —
+the wrong question for a hook that injects context into a coding agent. What actually matters
+there is: does it surface the right memory when the prompt is on-topic, and *stay silent* when
+it isn't? So this repo ships a labeled eval instead: a synthetic 18-memory store and 36
+developer-realistic queries (24 on-topic incl. hard paraphrases, 12 off-topic), run through the
+exact shipped gating code:
+
+| Tier | Recall | False-fire |
+| --- | --- | --- |
+| `preflight` (hook — every prompt) | 14/24 (58%) | **0/12 (0%)** |
+| `memcheck` (agent-invoked) | 20/24 (83%) | 1/12 (8%) |
+
+The asymmetry is the design: the hook fires on every prompt, so it is tuned to never inject
+noise; `memcheck` is asked for deliberately, so it trades a little noise for recall. The misses
+are paraphrase-heavy queries with few shared tokens — the known ceiling of a lexical scorer,
+and the price of zero dependencies. Reproduce with `npm run bench` (`--verbose` lists every
+miss); CI floors in the test suite pin false-fire at 0 and recall above 50%/75%.
+
 ## Tests
 
 ```bash

@@ -5,6 +5,7 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
-    "test": "node --test test/memory-suite.test.mjs"
+    "test": "node --test test/memory-suite.test.mjs",
+    "bench": "node test/bench/run-bench.mjs"
   }
 }
