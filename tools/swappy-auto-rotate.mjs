@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// swappy-auto-rotate — Claude Code Stop hook that rotates to your next saved login
-// the moment a usage window (5h or 7d) crosses a threshold. The actual account swap
-// is done by swappy, PiXeL16's Claude Code login rotator:
+// swappy-auto-rotate — Claude Code hook (Stop + async PostToolUse; see README) that
+// rotates to your next saved login the moment a usage window (5h or 7d) crosses a
+// threshold — mid-turn included. The actual account swap is done by swappy,
+// PiXeL16's Claude Code login rotator:
 //   https://github.com/PiXeL16/swappy
 //
 // Data source: a snapshot file your statusline writes each turn from the rate_limits

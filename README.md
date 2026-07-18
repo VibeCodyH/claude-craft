@@ -148,17 +148,26 @@ Two things make the design work:
    moment a turn crosses the line — rescuing the session that is running hot, and migrating any
    other running sessions on their next action too.
 
-Register as a `Stop` hook:
+Register as a `Stop` hook, plus an async `PostToolUse` hook so long turns get rescued mid-turn:
 
 ```json
 {
   "hooks": {
     "Stop": [
       { "matcher": "", "hooks": [{ "type": "command", "command": "node ~/.claude/tools/swappy-auto-rotate.mjs", "timeout": 15 }] }
+    ],
+    "PostToolUse": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "node ~/.claude/tools/swappy-auto-rotate.mjs", "timeout": 15, "async": true }] }
     ]
   }
 }
 ```
+
+Why both: a Stop hook only fires between turns, and one marathon turn can ride from 90% to a
+hard limit without ever reaching Stop (field-tested: 98% before a human noticed). The statusline
+snapshot updates *during* turns, so the PostToolUse wiring catches the crossing after the next
+tool call; `"async": true` keeps it off the critical path, and the cooldown stamp already
+dedups the two wirings.
 
 Guard rails: windows whose `resets_at` already passed are ignored (the limit reset while you
 were idle), malformed or >6h-old snapshots are ignored, and when *every* account is over the
