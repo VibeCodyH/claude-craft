@@ -2,7 +2,9 @@
 
 Tooling for [Claude Code](https://claude.com/claude-code): memory hygiene (a linter, a pre-flight
 recall hook, an agent-invokable self-check, hash-pinned staleness detection), a config-driven
-protected-repo push guard, and a delegation skill for orchestrating cheaper executor CLIs.
+protected-repo push guard, a usage-limit auto-rotate hook (companion to
+[swappy](https://github.com/PiXeL16/swappy)), and a delegation skill for orchestrating cheaper
+executor CLIs.
 
 Claude Code's auto-memory is a directory of markdown files plus a `MEMORY.md` index. It's great —
 until it rots. Links dangle after renames, the index drifts from the files, near-duplicate
@@ -119,6 +121,53 @@ and add it as a `PreToolUse` hook on Bash in `~/.claude/settings.json`:
 Fail-open by design: no config or a broken config protects nothing rather than bricking every
 Bash call. The guard is belt-and-suspenders over your prose rule, not a replacement for it.
 
+## Usage-limit auto-rotate (companion to swappy)
+
+`tools/swappy-auto-rotate.mjs` closes the loop on multi-account usage limits: when either
+subscription window (5-hour or 7-day) crosses a threshold (default 95%), a Stop hook rotates you
+to your next saved login automatically and sends a desktop notification. The swap itself is done
+by **[swappy](https://github.com/PiXeL16/swappy)** — PiXeL16's excellent minimal Claude Code
+login rotator. Install and set that up first (`swappy save <name>` per account); this hook is
+just the trigger finger.
+
+Two things make the design work:
+
+1. **No polling, no API calls.** Claude Code already hands your statusline the official
+   `rate_limits` percentages every turn. Persist them from your statusline command script:
+
+   ```js
+   // statusline receives the payload as JSON on stdin — add:
+   if (payload.rate_limits) {
+     fs.writeFileSync(path.join(os.homedir(), ".claude", "usage-snapshot.json"),
+       JSON.stringify({ ts: Date.now(), rate_limits: payload.rate_limits }));
+   }
+   ```
+
+2. **Mid-session swaps take effect.** Claude Code picks up credentials changed on disk on the
+   session's next action (changelog 2.1.186 fixed the stale-cache case), so the hook swaps the
+   moment a turn crosses the line — rescuing the session that is running hot, and migrating any
+   other running sessions on their next action too.
+
+Register as a `Stop` hook:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      { "matcher": "", "hooks": [{ "type": "command", "command": "node ~/.claude/tools/swappy-auto-rotate.mjs", "timeout": 15 }] }
+    ]
+  }
+}
+```
+
+Guard rails: windows whose `resets_at` already passed are ignored (the limit reset while you
+were idle), malformed or >6h-old snapshots are ignored, and when *every* account is over the
+threshold a cooldown stamp (default 15 min) stops exhausted accounts from ping-ponging — the
+stamp is claimed *before* swapping so concurrent sessions can't double-rotate, and a failed
+swap backs off only 2 minutes instead of consuming the full cooldown. All subprocess calls are
+timeboxed so the hook can never stall a turn. Tune via `SWAPPY_GUARD_THRESHOLD`,
+`SWAPPY_GUARD_COOLDOWN_MIN`, `SWAPPY_BIN`; test decisions safely with `SWAPPY_GUARD_DRYRUN=1`.
+
 ## Delegation skill
 
 `skills/delegate/` teaches the agent a fixed division of labor: **Claude plans and reviews,
@@ -154,7 +203,7 @@ miss); CI floors in the test suite pin false-fire at 0 and recall above 50%/75%.
 ## Tests
 
 ```bash
-node --test test/memory-suite.test.mjs
+npm test
 ```
 
 ## License
