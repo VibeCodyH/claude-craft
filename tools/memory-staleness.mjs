@@ -10,19 +10,22 @@
 //   --dir <path>       override the memory dir
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { resolveMemoryDir } from "./memory-lib.mjs";
 
-const BIND_RE = /^\s*-\s*(?:"(\/[^"@]+)"|(\/[^@\s]+))@([0-9a-f]{8,64})\s*$/;
+// Bound hash: 12 hex minimum (the documented form); longer prefixes of the
+// full sha256 are accepted and verified in full.
+const BIND_RE = /^\s*-\s*(?:"(\/[^"@]+)"|(\/[^@\s]+))@([0-9a-f]{12,64})\s*$/;
 
-const hash12 = (path) =>
-  createHash("sha256").update(readFileSync(path)).digest("hex").slice(0, 12);
+const hashFull = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
 
 const args = process.argv.slice(2);
 
 if (args[0] === "--bind") {
   for (const f of args.slice(1)) {
-    try { console.log(`      - ${f}@${hash12(f)}`); }
+    // The scanner only matches absolute paths, so always emit one.
+    const abs = resolve(f);
+    try { console.log(`      - ${abs}@${hashFull(abs).slice(0, 12)}`); }
     catch { console.error(`cannot read: ${f}`); process.exitCode = 1; }
   }
   process.exit();
@@ -45,8 +48,7 @@ for (const mem of files) {
     const [, quoted, bare, bound] = m;
     const target = quoted || bare;
     try {
-      const now = hash12(target);
-      if (!now.startsWith(bound.slice(0, 12)) && !bound.startsWith(now))
+      if (!hashFull(target).startsWith(bound))
         drift.push(`${mem}: ${target} CHANGED since bound — verify the memory, then rebind`);
     } catch {
       drift.push(`${mem}: ${target} MISSING — memory references a deleted/moved file`);

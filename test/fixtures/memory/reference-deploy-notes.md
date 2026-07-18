@@ -1,6 +1,6 @@
 ---
 name: reference-deploy-notes
-description: Deploy pipeline vercel production deploys on merge to main, older notes
+description: Deploy pipeline production promotion on merge to main branch, older staging notes
 metadata:
   type: reference
 ---
