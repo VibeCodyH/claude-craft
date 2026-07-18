@@ -1,0 +1,10 @@
+{
+  "name": "claude-craft",
+  "version": "0.1.0",
+  "description": "Linting, recall hooks, and staleness detection for Claude Code's file-based memory",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/memory-suite.test.mjs"
+  }
+}
