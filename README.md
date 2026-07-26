@@ -149,7 +149,7 @@ by **[swappy](https://github.com/PiXeL16/swappy)** — PiXeL16's excellent minim
 login rotator. Install and set that up first (`swappy save <name>` per account); this hook is
 just the trigger finger.
 
-Two things make the design work:
+Three things make the design work:
 
 1. **No polling, no API calls.** Claude Code already hands your statusline the official
    `rate_limits` percentages every turn. Persist them from your statusline command script:
@@ -166,6 +166,20 @@ Two things make the design work:
    session's next action (changelog 2.1.186 fixed the stale-cache case), so the hook swaps the
    moment a turn crosses the line — rescuing the session that is running hot, and migrating any
    other running sessions on their next action too.
+
+3. **It picks a destination instead of rotating blindly.** The snapshot only describes the
+   account you are *on*, so `swappy next` can move you from an account with hours of 5-hour
+   headroom onto one that is 100% capped and kill the turn. (Observed: work at 7d 96% but 5h 9%,
+   rotated onto a 5h-exhausted personal.) The hook keeps a per-profile ledger of the last usage
+   seen for each login — it is running every turn anyway — and swaps with `swappy use <name>` to
+   the account it knows is healthy.
+
+   The rule that falls out of that is worth stating on its own: **an unmeasured account is only
+   worth gambling on when you are already stuck.** If your current 5-hour window is still live,
+   the hook only swaps to a profile the ledger knows is healthy; being 7-day-hot is not a reason
+   to trade a working session for a coin flip. When nothing beats where you are it stays put, and
+   says so *only* if you are genuinely capped — a correct "everything still works" is not worth a
+   notification every cooldown period.
 
 Register as a `Stop` hook, plus an async `PostToolUse` hook so long turns get rescued mid-turn:
 
@@ -193,8 +207,16 @@ were idle), malformed or >6h-old snapshots are ignored, and when *every* account
 threshold a cooldown stamp (default 15 min) stops exhausted accounts from ping-ponging — the
 stamp is claimed *before* swapping so concurrent sessions can't double-rotate, and a failed
 swap backs off only 2 minutes instead of consuming the full cooldown. All subprocess calls are
-timeboxed so the hook can never stall a turn. Tune via `SWAPPY_GUARD_THRESHOLD`,
-`SWAPPY_GUARD_COOLDOWN_MIN`, `SWAPPY_BIN`; test decisions safely with `SWAPPY_GUARD_DRYRUN=1`.
+timeboxed so the hook can never stall a turn.
+
+The ledger has its own rails, because a wrong entry there sends you to a dead account: a reading
+is only filed against the active profile if the snapshot is under 5 minutes old, recording pauses
+for 2 minutes after a swap (Claude Code has not re-read credentials yet, so the statusline is
+still reporting the account you just left), entries older than 8 days stop counting as evidence,
+and a recorded cap whose `resets_at` has since passed stops counting against that profile without
+needing to have been active to observe it. If `swappy ls` cannot be read at all the hook refuses
+to swap rather than guess. Tune via `SWAPPY_GUARD_THRESHOLD`, `SWAPPY_GUARD_COOLDOWN_MIN`,
+`SWAPPY_GUARD_LEDGER`, `SWAPPY_BIN`; test decisions safely with `SWAPPY_GUARD_DRYRUN=1`.
 
 ## Delegation skill
 
