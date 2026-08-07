@@ -1,0 +1,365 @@
+#!/usr/bin/env bash
+# One calling convention for every coding-agent CLI you have installed.
+#
+#   agentcall <agent> [-d DIR] [-m MODE] [-M MODEL] [PROMPT]
+#   agentcall <agent> ... < prompt.txt        # prompt on stdin
+#   agentcall --list                          # agents + what each is good for
+#   agentcall --probe [agent ...]             # auth/health check
+#   agentcall --print-command <agent> ...     # show the native invocation, run nothing
+#   agentcall --new <name>                    # scaffold a drop-in adapter
+#
+#   MODE: ro (default, read-only where the CLI supports it) | rw
+#
+# Prints the agent's final text on stdout. Every quirk noted below was measured
+# against a real CLI, not taken from its docs -- the two disagree more than you
+# would like. Read-only recipes for codex/claude/agy adapted in part from
+# RobertTLange/headless-cli.
+#
+# Requires bash 4+, and jq for the adapters that parse JSON output (grok, coderabbit).
+set -uo pipefail
+
+# macOS ships bash 3.2, where `"${arr[@]}"` on an EMPTY array is an unbound-variable
+# error under `set -u` -- which every adapter here would trip on its first call.
+if [ -z "${BASH_VERSINFO:-}" ] || [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
+  echo "agentcall: needs bash 4+ (macOS ships 3.2 — \`brew install bash\`)" >&2
+  exit 2
+fi
+
+BUILTIN_AGENTS="codex claude grok kimi vibe glm agy opencode copilot coderabbit"
+
+# Shared with crunch.mjs so one credential file serves both.
+AGENTCALL_ENV="${AGENTCALL_ENV:-$HOME/.config/claude-craft/crunch.env}"
+
+# BSD/macOS has no `timeout`; coreutils installs it as `gtimeout`. Without either,
+# run uncapped rather than refuse -- a missing watchdog should not break the tool.
+AGENT_TIMEOUT="${AGENTCALL_TIMEOUT:-900}"
+if command -v timeout >/dev/null 2>&1;      then TIMEOUT_CMD=timeout
+elif command -v gtimeout >/dev/null 2>&1;   then TIMEOUT_CMD=gtimeout
+else                                             TIMEOUT_CMD=""
+fi
+
+# ---------------------------------------------------------------------------
+# Drop-in agents. A new CLI is a file, not a patch to this script:
+#
+#   ~/.config/agentcall/agents.d/<name>.sh   defining  run_<name>()
+#
+# with $dir $mode $model $prompt already in scope. `agentcall --new <name>`
+# scaffolds one. A drop-in whose name matches a builtin OVERRIDES the builtin,
+# which is how you fix a recipe that upstream changed without editing this file.
+# (The per-backend registration idea is borrowed from headless-cli; the drop-in
+# FILE form is simpler than a config schema and can express the awkward adapters
+# -- codex's -o file, grok's JSON parse -- that pure data cannot.)
+AGENTS_D="${AGENTCALL_AGENTS_D:-$HOME/.config/agentcall/agents.d}"
+DROPIN_AGENTS=""
+if [ -d "$AGENTS_D" ]; then
+  for _f in "$AGENTS_D"/*.sh; do
+    [ -e "$_f" ] || continue
+    # shellcheck disable=SC1090
+    . "$_f"
+    _n=$(basename "$_f" .sh)
+    DROPIN_AGENTS="$DROPIN_AGENTS $_n"
+  done
+  unset _f _n
+fi
+AGENTS="$BUILTIN_AGENTS$DROPIN_AGENTS"
+
+# --print-command: show the native invocation instead of running it. Every flag bug
+# this script has hit (codex's --ask-for-approval, grok's -p arg-eating, grok's
+# missing --always-approve) was invisible until something downstream looked wrong.
+# This makes the command itself the thing you inspect.
+DRY="${AGENTCALL_DRY:-}"
+_run() {
+  if [ -n "$DRY" ]; then printf '%q ' "$@"; echo; return 0; fi
+  if [ -n "$TIMEOUT_CMD" ]; then "$TIMEOUT_CMD" "$AGENT_TIMEOUT" "$@"; else "$@"; fi
+}
+
+die() { echo "agentcall: $*" >&2; exit 2; }
+
+need_jq() { command -v jq >/dev/null 2>&1 || die "$1 adapter needs jq (brew install jq)"; }
+
+# vibe wants MISTRAL_API_KEY. The same key is often already on disk as VIBE_API_KEY
+# in the shared credential file; read it at call time, never copy or echo it.
+load_mistral_key() {
+  [ -n "${MISTRAL_API_KEY:-}" ] && return
+  [ -f "$AGENTCALL_ENV" ] || return
+  local k
+  k=$(sed -n -e 's/^[[:space:]]*\(export[[:space:]]*\)\{0,1\}MISTRAL_API_KEY=//p' \
+             -e 's/^[[:space:]]*\(export[[:space:]]*\)\{0,1\}VIBE_API_KEY=//p' \
+             "$AGENTCALL_ENV" | head -1 | tr -d '"'"'"' \r')
+  [ -n "$k" ] && export MISTRAL_API_KEY="$k"
+}
+
+usage() {
+  cat <<'EOF'
+agentcall <agent> [-d DIR] [-m ro|rw] [-M MODEL] [PROMPT]
+          --list                     agents + what each is good for
+          --probe [agent ...]        auth/health check
+          --print-command <agent> …  show the native invocation, run nothing
+          --new <name>               scaffold a drop-in adapter
+
+Prompt comes from the PROMPT argument, or stdin if omitted.
+
+Adding an agent:
+  a MODEL on an existing CLI  ->  nothing to add; use  -M provider/model
+  a whole new CLI             ->  agentcall --new <name>, edit the stub
+
+Env: AGENTCALL_TIMEOUT (default 900s), AGENTCALL_AGENTS_D, AGENTCALL_ENV.
+EOF
+}
+
+list_agents() {
+  cat <<'EOF'
+AGENT       ro-mode                         notes (measured, not from the docs)
+----------  ------------------------------  ------------------------------------------------
+codex       -s read-only                    ★ strongest reviewer of this set. Needs -o FILE or
+                                              it streams its whole reasoning trace (152KB on a
+                                              4-file PR). Prompt on stdin via '-'. Flag surface
+                                              moves between builds: if --ask-for-approval or
+                                              --search errors, your build has only -s.
+claude      --allowedTools Read,Grep,...    Prompt MUST go on stdin, not argv: a diff-sized
+                                              prompt exceeds ARG_MAX.
+grok        (none — needs --always-approve) ★ -p is --single and eats the NEXT arg, so it goes
+                                              last. WITHOUT --always-approve any tool use is
+                                              SILENTLY cancelled (stopReason "Cancelled") and
+                                              reads exactly like a short bad review. --sandbox
+                                              no-ops headless. Adapter reads .text from
+                                              --output-format json and flags early stops loudly.
+kimi        (none)                          Emits 45KB+ of raw reasoning with no verdict
+                                              contract, and talks itself out of blocking bugs.
+vibe        (none)                          Needs --trust per directory or it ignores the
+                                              repo's agent instructions file. Needs
+                                              MISTRAL_API_KEY.
+glm         --yolo passthrough              Claude Code pointed at GLM's API, so it takes
+                                              Claude Code flags. Needs a token: glm token.
+agy         --sandbox                       ⚠ NOT a reviewer. Auto-denies its own tools, so it
+                                              can never fetch its own input; --sandbox does not
+                                              help. Refuses any security-framed prompt. Wanders
+                                              outside the given cwd.
+                                              ★ IS a decent TEXT CRUNCHER when the content is
+                                              piped in on stdin and no tool call is needed: it
+                                              said "could not classify" on truncated input
+                                              instead of inventing rows. Never point it at a
+                                              path; always inline the text.
+opencode    (none — needs --auto)           Multi-provider front-end; -M is provider/model
+                                              (`opencode models`). Worth a slot for reaching
+                                              model lineages the other CLIs cannot -- reviewer
+                                              agreement is worth less when everyone shares a
+                                              base model. --auto is required or tool calls are
+                                              denied and you get a confident review of a diff
+                                              it never read.
+copilot     (none)                          Monthly quota; check --probe before a bulk run.
+coderabbit  always read-only                Takes NO prompt -- it has its own review contract.
+                                              Free tier is a few reviews per hour. Read findings
+                                              from the type:"complete" JSON record, never the
+                                              exit code. Set CR_BASE if the repo has no `main`.
+EOF
+}
+
+probe_one() {
+  local a="$1" out
+  printf '%-11s ' "$a"
+  command -v "$a" >/dev/null 2>&1 || { echo "not installed"; return; }
+  out=$(run_agent "$a" "$PWD" ro "" "Reply with exactly: OK" 2>&1 | tr '\n' ' ')
+  case "$out" in
+    *OK*)                      echo "ok" ;;
+    *auth*|*Auth*|*token*|*login*|*API_KEY*) echo "NEEDS AUTH — ${out:0:80}" ;;
+    *quota*|*Quota*)           echo "QUOTA EXHAUSTED" ;;
+    *)                         echo "unclear — ${out:0:80}" ;;
+  esac
+}
+
+# run_agent <agent> <dir> <mode> <model> <prompt>
+run_agent() {
+  local a="$1" dir="$2" mode="$3" model="$4" prompt="$5"
+  local m=(); [ -n "$model" ] && m=(--model "$model")
+
+  case "$a" in
+    codex)
+      # -o or it dumps the entire reasoning stream instead of the review.
+      local last; last=$(mktemp); : > "$last"
+      local ro=(); [ "$mode" = ro ] && ro=(-s read-only)
+      if [ -n "$DRY" ]; then
+        rm -f "$last"; _run codex exec "${ro[@]}" -C "$dir" -o OUTFILE -; return 0
+      fi
+      printf '%s' "$prompt" | _run codex exec "${ro[@]}" -C "$dir" -o "$last" - >/dev/null 2>&1
+      cat "$last"; rm -f "$last" ;;
+
+    claude)
+      # stdin, never argv -- a diff-sized prompt blows ARG_MAX.
+      local ro=(); [ "$mode" = ro ] && ro=(--allowedTools "Read,Grep,Glob,LS,WebFetch,WebSearch")
+      ( cd "$dir" && printf '%s' "$prompt" | _run claude -p "${m[@]}" "${ro[@]}" 2>&1 ) ;;
+
+    grok)
+      # -p (--single) consumes the next arg, so it must come last.
+      # ★ Without --always-approve, tool use in headless mode is SILENTLY cancelled:
+      # you get partial narration and stopReason "Cancelled", indistinguishable from
+      # a bad short review. --no-auto-update and --no-alt-screen are the documented
+      # script-mode flags. json returns one object at the end; .text is the answer.
+      if [ -n "$DRY" ]; then
+        # No jq needed to PRINT the invocation, and --print-command has to keep
+        # working on a box that is missing it.
+        _run grok --cwd "$dir" "${m[@]}" \
+          --always-approve --no-auto-update --no-alt-screen \
+          --output-format json -p "$prompt"
+        return 0
+      fi
+      need_jq grok
+      local out; out=$(mktemp)
+      ( cd "$dir" && _run grok --cwd "$dir" "${m[@]}" \
+          --always-approve --no-auto-update --no-alt-screen \
+          --output-format json -p "$prompt" ) > "$out" 2>&1
+      local stop text
+      stop=$(jq -r '.stopReason // "unknown"' "$out" 2>/dev/null)
+      text=$(jq -r '.text // ""' "$out" 2>/dev/null)
+      if [ -z "$text" ]; then
+        # Not valid JSON, or no text: surface the raw output rather than an empty
+        # string, which downstream would read as "the reviewer found nothing".
+        echo "DID NOT COMPLETE — no text returned (stopReason=$stop). Raw:"
+        head -c 2000 "$out"
+      else
+        echo "$text"
+        # The success value is exactly "EndTurn". Matched case-insensitively so a
+        # casing change upstream does not start labelling complete reviews as
+        # truncated -- a false "incomplete" is as damaging as a missed truncation.
+        case "$(printf '%s' "$stop" | tr 'A-Z' 'a-z')" in
+          endturn|end_turn|completed|stop|"") ;;
+          *) echo; echo "_TRUNCATED — grok stopped early (stopReason=$stop); this review is INCOMPLETE, not a clean pass._" ;;
+        esac
+      fi
+      rm -f "$out" ;;
+
+    kimi)
+      ( cd "$dir" && _run kimi "${m[@]}" -p "$prompt" 2>&1 ) ;;
+
+    vibe)
+      load_mistral_key
+      ( cd "$dir" && _run vibe --trust --prompt "$prompt" 2>&1 ) ;;
+
+    glm)
+      ( cd "$dir" && printf '%s' "$prompt" | _run glm --yolo -p 2>&1 ) ;;
+
+    agy)
+      # Kept callable for interactive/manual use. Headless it will almost certainly
+      # return a permission denial -- see --list.
+      local ro=(); [ "$mode" = ro ] && ro=(--sandbox)
+      ( cd "$dir" && _run agy "${m[@]}" -p "$prompt" "${ro[@]}" 2>&1 ) ;;
+
+    opencode)
+      # --auto is the grok --always-approve analogue: without it, tool calls are
+      # denied and the output looks like a review of a diff it never read.
+      local om=(); [ -n "$model" ] && om=(-m "$model")
+      _run opencode run --dir "$dir" "${om[@]}" --auto "$prompt" 2>&1 ;;
+
+    copilot)
+      ( cd "$dir" && _run copilot -p "$prompt" 2>&1 ) ;;
+
+    coderabbit)
+      # Ignores the prompt by design; emits JSONL. Success is the completion record,
+      # NOT the exit code -- it exits 0 with findings and without.
+      need_jq coderabbit
+      local raw; raw=$(mktemp)
+      # CR_BASE: a shallow or history-truncated checkout has no `main` ref, so the
+      # default base would make it review nothing and report 0 findings -- a silent
+      # "clean pass" that is really "never ran".
+      ( cd "$dir" && _run coderabbit review --committed --base "${CR_BASE:-main}" --agent ) > "$raw" 2>&1
+      local c; c=$(jq -rc 'select(.type=="complete")' "$raw" 2>/dev/null | tail -1)
+      if [ -z "$c" ]; then
+        jq -r 'select(.type=="error") | "DID NOT RUN — \(.errorType): \(.message)"' "$raw" 2>/dev/null | tail -1
+        [ -s "$raw" ] || echo "DID NOT RUN — no output"
+      else
+        echo "findings=$(jq -r '.findings' <<<"$c")"
+        jq -r 'select(.type=="finding") | "- [\(.severity)] \(.fileName)\n  \(.codegenInstructions)"' "$raw" 2>/dev/null
+      fi
+      rm -f "$raw" ;;
+
+    *)
+      # Drop-ins are sourced above; a matching run_<name> means it is real.
+      if command -v "run_$a" >/dev/null 2>&1; then
+        run_"$a"
+      else
+        die "unknown agent '$a' (have:$AGENTS)"
+      fi ;;
+  esac
+}
+
+scaffold_agent() {
+  local name="$1"
+  [ -n "$name" ] || die "--new needs a name"
+  case "$name" in *[!a-z0-9_-]*) die "agent name must be [a-z0-9_-]" ;; esac
+  mkdir -p "$AGENTS_D"
+  local f="$AGENTS_D/$name.sh"
+  [ -e "$f" ] && die "$f already exists"
+  cat > "$f" <<EOF
+# agentcall drop-in: $name
+# \$dir \$mode \$model \$prompt are in scope. \$mode is "ro" or "rw".
+# Print the agent's FINAL TEXT on stdout and nothing else.
+#
+# Before trusting a new adapter, run BOTH of these:
+#   agentcall --print-command $name -d . "hello"   # is the invocation right?
+#   agentcall --probe $name                        # does it authenticate?
+
+notes_$name() {
+  cat <<'NOTES'
+one line on what this agent is good for, plus any measured quirk
+NOTES
+}
+
+run_$name() {
+  local ro=(); [ "\$mode" = ro ] && ro=()          # read-only flags, if any
+  local m=();  [ -n "\$model" ] && m=(--model "\$model")
+
+  # ★ Two traps that have bitten every CLI added here so far:
+  #   1. A diff-sized prompt can exceed ARG_MAX -- prefer stdin over argv.
+  #   2. Several CLIs SILENTLY cancel tool calls without an approval flag, and the
+  #      partial output looks exactly like a lazy review. Find the flag (grok:
+  #      --always-approve, opencode: --auto) before trusting the adapter.
+  printf '%s' "\$prompt" | _run $name "\${ro[@]}" "\${m[@]}" 2>&1
+}
+EOF
+  echo "created $f"
+  echo "next: edit it, then  agentcall --print-command $name -d . 'hello'"
+}
+
+# --- args -------------------------------------------------------------------
+[ $# -eq 0 ] && { usage; exit 2; }
+
+case "$1" in
+  --list)
+    list_agents
+    if [ -n "$DROPIN_AGENTS" ]; then
+      echo
+      echo "drop-ins ($AGENTS_D):"
+      for a in $DROPIN_AGENTS; do
+        printf '%-11s ' "$a"
+        command -v "notes_$a" >/dev/null 2>&1 && notes_"$a" | head -1 || echo "(no notes)"
+      done
+    fi
+    exit 0 ;;
+  --new) shift; scaffold_agent "${1:-}"; exit 0 ;;
+  --print-command) DRY=1; shift ;;
+  --probe)
+    shift
+    for a in ${*:-$AGENTS}; do probe_one "$a"; done
+    exit 0 ;;
+  -h|--help) usage; exit 0 ;;
+esac
+
+agent="$1"; shift
+dir="$PWD"; mode="ro"; model=""
+while getopts "d:m:M:" opt; do
+  case "$opt" in
+    d) dir="$OPTARG" ;;
+    m) mode="$OPTARG" ;;
+    M) model="$OPTARG" ;;
+    *) usage; exit 2 ;;
+  esac
+done
+shift $((OPTIND - 1))
+
+prompt="${1:-}"
+[ -z "$prompt" ] && [ ! -t 0 ] && prompt=$(cat)
+[ -z "$prompt" ] && [ "$agent" != coderabbit ] && die "no prompt (argument or stdin)"
+[ -d "$dir" ] || die "no such directory: $dir"
+case "$mode" in ro|rw) ;; *) die "mode must be ro or rw" ;; esac
+
+run_agent "$agent" "$dir" "$mode" "$model" "$prompt"

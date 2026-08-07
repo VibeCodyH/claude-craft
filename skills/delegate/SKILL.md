@@ -77,6 +77,10 @@ Then Claude reviews the diff/output before anything ships.
   unsandboxed when there's no controlling terminal — gate with `--allow` / `--disallowed-tools`
   instead of trusting a sandbox flag in headless mode. Test your executor's isolation before
   relying on it.
+- **A missing approval flag cancels tool calls SILENTLY.** Several CLIs (grok without
+  `--always-approve`, opencode without `--auto`) deny their own tool use headlessly and return
+  partial narration that reads exactly like a lazy review — you get a confident opinion on a diff
+  the model never opened. Find the approval flag before trusting any new executor's output.
 - **Executors fail loudly at call time** (quota, auth) — don't pre-check; fall back to another
   executor or do it solo. Expect flakes: an empty report with exit 0 happens; treat "no findings"
   from a reviewer that shows no evidence of reading files as a failed run, not a clean bill.
@@ -90,14 +94,28 @@ Then Claude reviews the diff/output before anything ships.
 - **Secrets never go in a delegated prompt** — the executor CLI runs locally, but its prompt and
   output transit a third-party API.
 
-## Making it stick (optional hooks)
+## Making it stick (hooks, not just advice)
 
-A skill is advice; hooks make it a default. Pair this with:
+A skill is advice, and advice loses to reflex. Two hooks in this repo turn it into a default:
 
-- a **PostToolUse nudge** that fires when the main loop hand-edits N files in a few minutes and
-  prints a ready-to-run executor command, and
-- a **PreToolUse cap** that denies the Nth parallel subagent spawn, forcing the overflow to
-  cheaper executors.
+- `delegation-nudge.mjs` (**PostToolUse**) fires when the main loop hand-edits N distinct files in
+  a few minutes and prints a ready-to-run executor command for the rest of the sweep.
+- `delegation-guard.mjs` (**PreToolUse**) denies the Nth subagent spawn in a rolling window, with a
+  tighter cap on expensive models, so the overflow goes to a cheaper executor instead.
 
-Both are straightforward to write against the hook JSON contract; `protected-repo-guard.mjs` in
-this repo shows the deny-response shape.
+`node install.mjs delegation` wires both.
+
+## One calling convention (`agentcall`)
+
+Every CLI above has a different flag for "yes, you may use your tools" and a different way of
+emitting its final answer. `bin/agentcall` in this repo normalizes them:
+
+```bash
+agentcall codex -d <repo> -m ro < promptfile     # same shape for every agent
+agentcall --probe                                # who is installed and authenticated
+agentcall --print-command grok -d . "hi"         # inspect the invocation before trusting it
+agentcall --new <name>                           # scaffold an adapter for a new CLI
+```
+
+Its `--list` output is the accumulated field notes for each CLI — read it before adding one to
+your rotation.
