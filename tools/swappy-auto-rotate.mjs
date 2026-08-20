@@ -9,6 +9,8 @@
 // payload Claude Code hands it (see README for the four-line snippet). Contract:
 //   { "ts": <epoch ms>, "rate_limits": { "five_hour": { "used_percentage": <int>,
 //     "resets_at": <epoch sec> }, "seven_day": { ... } } }
+// Optional: "acct": <accountUuid the reading was measured from>. Stamp it if your
+// statusline can — see the account-identity check below for what it buys you.
 //
 // Why a Stop hook works mid-session: Claude Code picks up credentials changed on
 // disk on the session's next action (its changelog 2.1.186 fixed the stale-cache
@@ -36,6 +38,8 @@
 //   SWAPPY_GUARD_SNAPSHOT      snapshot path   (default ~/.claude/usage-snapshot.json)
 //   SWAPPY_GUARD_STAMP         cooldown stamp  (default ~/.claude/swappy-guard-stamp.json)
 //   SWAPPY_GUARD_LEDGER        per-profile usage (default ~/.claude/swappy-usage-by-profile.json)
+//   SWAPPY_GUARD_CLAUDE_JSON   Claude Code config, read for the live accountUuid
+//                                                (default ~/.claude.json)
 //   SWAPPY_GUARD_DRYRUN=1      print the decision instead of swapping
 
 import { readFileSync, writeFileSync } from "node:fs";
@@ -54,6 +58,7 @@ const MAX_SNAP_AGE_MS = 6 * 3600e3; // older = no live session wrote it recently
 const SNAP = process.env.SWAPPY_GUARD_SNAPSHOT || path.join(os.homedir(), ".claude", "usage-snapshot.json");
 const STAMP = process.env.SWAPPY_GUARD_STAMP || path.join(os.homedir(), ".claude", "swappy-guard-stamp.json");
 const LEDGER = process.env.SWAPPY_GUARD_LEDGER || path.join(os.homedir(), ".claude", "swappy-usage-by-profile.json");
+const CLAUDE_JSON = process.env.SWAPPY_GUARD_CLAUDE_JSON || path.join(os.homedir(), ".claude.json");
 const SWAPPY = process.env.SWAPPY_BIN || "swappy";
 const DRY = process.env.SWAPPY_GUARD_DRYRUN === "1";
 // A reading older than this says nothing about an account today. Windows carry their
@@ -92,6 +97,23 @@ try { snap = JSON.parse(readFileSync(SNAP, "utf8")); } catch { process.exit(0); 
 if (!snap?.rate_limits || !Number.isFinite(snap.ts)) process.exit(0);
 const age = Date.now() - snap.ts;
 if (age > MAX_SNAP_AGE_MS || age < -60e3) process.exit(0); // stale — or from the future (clock skew / garbage)
+
+// ★ Whose usage is this? Recency alone does not answer it. After a login swap, a
+// session that has not made an API call yet keeps re-rendering the OLD account's
+// rate_limits, so a snapshot can be seconds old and still describe an account we
+// already left. Acting on it files the wrong numbers under the active profile — and
+// a hot reading would rotate off a login that is actually fine. `acct` on the
+// snapshot names the login the reading came from; Claude Code's own config names the
+// one that is live now. Disagreement means skip this run entirely.
+// Optional on both sides, so the snapshot contract stays backward compatible: no
+// `acct`, or no readable config, falls back to trusting the snapshot as before.
+const liveAcct = (() => {
+  try { return JSON.parse(readFileSync(CLAUDE_JSON, "utf8"))?.oauthAccount?.accountUuid || null; } catch { return null; }
+})();
+if (snap.acct && liveAcct && snap.acct !== liveAcct) {
+  if (DRY) console.log("[swappy-auto-rotate] DRYRUN snapshot is from another account, would skip");
+  process.exit(0);
+}
 
 const nowSec = Date.now() / 1000;
 // A window is hot only if it is complete AND its reset is still ahead — a past

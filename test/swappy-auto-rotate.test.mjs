@@ -14,6 +14,7 @@ const snapPath = join(dir, "snapshot.json");
 const stampPath = join(dir, "stamp.json");
 const ledgerPath = join(dir, "ledger.json");
 const swappyPath = join(dir, "swappy");
+const claudeJsonPath = join(dir, "claude.json");
 
 // A stub swappy. MUST be wired in every run: without it the guard shells out to the
 // real one and the tests would read, and record into, the developer's live logins.
@@ -29,8 +30,12 @@ esac
 );
 chmodSync(swappyPath, 0o755);
 
-const snapshot = ({ ts = Date.now(), fiveHour, sevenDay } = {}) =>
-  JSON.stringify({ ts, rate_limits: { five_hour: fiveHour, seven_day: sevenDay } });
+const snapshot = ({ ts = Date.now(), fiveHour, sevenDay, acct } = {}) =>
+  JSON.stringify({ ts, ...(acct ? { acct } : {}), rate_limits: { five_hour: fiveHour, seven_day: sevenDay } });
+
+// Stands in for ~/.claude.json. MUST be wired in every run for the same reason as the
+// swappy stub: the default is the developer's real config.
+const loggedInAs = (uuid) => writeFileSync(claudeJsonPath, JSON.stringify({ oauthAccount: { accountUuid: uuid } }));
 
 const win = (pct, resetsInSec = 7200) => ({
   used_percentage: pct,
@@ -51,11 +56,16 @@ const run = (extraEnv = {}) =>
       SWAPPY_GUARD_STAMP: stampPath,
       SWAPPY_GUARD_LEDGER: ledgerPath,
       SWAPPY_BIN: swappyPath,
+      SWAPPY_GUARD_CLAUDE_JSON: claudeJsonPath,
       ...extraEnv,
     },
   });
 
-const fresh = () => { rmSync(stampPath, { force: true }); rmSync(ledgerPath, { force: true }); };
+const fresh = () => {
+  rmSync(stampPath, { force: true });
+  rmSync(ledgerPath, { force: true });
+  loggedInAs("acct-work");
+};
 
 test.after(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -206,4 +216,31 @@ test("invalid threshold env falls back to default 95", () => {
   assert.equal(run({ SWAPPY_GUARD_THRESHOLD: "0" }), "");
   writeFileSync(snapPath, snapshot({ fiveHour: win(97) }));
   assert.match(run({ SWAPPY_GUARD_THRESHOLD: "0" }), /would SWAP/);
+});
+
+// ★ 2026-08-19: after a swap, a session that has not made an API call yet keeps
+// re-rendering the account it was on. That snapshot is fresh by `ts` and completely
+// wrong about who it describes, so `acct` has to gate the whole run — recording it
+// files the old account's numbers under the new profile, and a hot reading would
+// rotate off a login that is actually healthy.
+test("snapshot stamped with another account: skipped entirely", () => {
+  fresh();
+  writeFileSync(snapPath, snapshot({ acct: "acct-personal", fiveHour: win(97), sevenDay: win(96) }));
+  assert.match(run(), /snapshot is from another account/);
+  assert.equal(existsSync(ledgerPath), false, "must not record a foreign reading");
+});
+
+test("snapshot stamped with the live account: acts normally", () => {
+  fresh();
+  writeFileSync(snapPath, snapshot({ acct: "acct-work", fiveHour: win(97), sevenDay: win(40) }));
+  assert.match(run(), /would SWAP \(5h at 97%\)/);
+  assert.ok(JSON.parse(readFileSync(ledgerPath, "utf8")).profiles.work, "records against the active profile");
+});
+
+// The snapshot contract keeps `acct` optional — an un-stamped statusline, or an
+// unreadable config, must behave exactly as it did before the check existed.
+test("no acct on either side: falls back to trusting the snapshot", () => {
+  fresh();
+  writeFileSync(snapPath, snapshot({ fiveHour: win(97), sevenDay: win(40) }));
+  assert.match(run({ SWAPPY_GUARD_CLAUDE_JSON: join(dir, "nope.json") }), /would SWAP \(5h at 97%\)/);
 });

@@ -284,6 +284,13 @@ Three things make the design work:
    }
    ```
 
+   If you rotate logins, also stamp which account the reading came from — the payload has no
+   account field, so read `oauthAccount.accountUuid` out of `~/.claude.json` and add it as
+   `acct`. A session that has not made an API call since a swap keeps re-rendering the account
+   it *was* on, and that snapshot is fresh by `ts` while being wrong about whose usage it is.
+   With `acct` present the hook skips those runs instead of filing them under the wrong
+   profile. It stays optional: no stamp means the old trust-the-snapshot behavior.
+
 2. **Mid-session swaps take effect.** Claude Code picks up credentials changed on disk on the
    session's next action (changelog 2.1.186 fixed the stale-cache case), so the hook swaps the
    moment a turn crosses the line — rescuing the session that is running hot, and migrating any
