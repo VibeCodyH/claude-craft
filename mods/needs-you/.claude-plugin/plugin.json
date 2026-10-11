@@ -1,0 +1,7 @@
+{
+  "name": "needs-you",
+  "version": "0.1.0",
+  "description": "An amber pill above the prompt while Claude is waiting on you: open it for each question or command, with a copy button.",
+  "author": { "name": "Cody Harris", "url": "https://github.com/VibeCodyH" },
+  "types": "./types/index.d.ts"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "clipboard-step",
+  "version": "0.1.2",
+  "description": "Shows what Claude just put on the clipboard for you to run, above the prompt, until you paste it, clear it, or send your next prompt.",
+  "author": { "name": "Cody Harris", "url": "https://github.com/VibeCodyH" },
+  "types": "./types/index.d.ts"
+}
