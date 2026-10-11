@@ -1,10 +1,10 @@
 # claude-craft
 
-Hooks, tools, and one skill for [Claude Code](https://claude.com/claude-code), covering the four
+Hooks, tools, one skill, and a set of mods for [Claude Code](https://claude.com/claude-code). The hooks and tools cover the four
 things that quietly cost the most: a memory store that rots, subagent fan-out that eats a usage
 window, bulk work sent to an expensive model, and an agent pushing to a repo it should not.
 
-Zero dependencies, plain Node (18+), ESM.
+Zero dependencies, plain Node (18+), ESM. The [mods](#mods) run inside Claude Code itself.
 
 ## Quick start
 
@@ -48,7 +48,7 @@ Restart Claude Code afterward to pick up the hooks.
 | `protected-repos` | hook | Blocks pushes and PRs on repos where a human runs every push. |
 | `rotate` | hooks | Swaps logins at a usage threshold, via [swappy](https://github.com/PiXeL16/swappy). |
 | `skills` | skill | `delegate`: when to hand work to an executor, and how. |
-| `mods` | Claude Code mods | Bands and panes in Claude Code's own UI: blast radius, prod tripwire, PR tracker, usage limits. |
+| `mods` | `/plugin install`, see [Mods](#mods) | Bands and panes in Claude Code's own UI: blast radius, prod tripwire, PR tracker, usage limits. |
 
 ## Memory
 
