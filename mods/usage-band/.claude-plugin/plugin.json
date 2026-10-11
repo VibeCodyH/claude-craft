@@ -1,0 +1,15 @@
+{
+  "name": "usage-band",
+  "version": "0.2.0",
+  "description": "Band above the prompt: Codex + Claude rate limits with reset countdowns, context left, a clock, and an optional next event",
+  "author": { "name": "Cody Harris", "url": "https://github.com/VibeCodyH" },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "nextFile": {
+      "type": "string",
+      "title": "Next-event file",
+      "description": "Path to a JSON file with next_date and next_text (written by your calendar script). Empty hides the NEXT segment",
+      "default": ""
+    }
+  }
+}

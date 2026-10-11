@@ -1,0 +1,15 @@
+{
+  "name": "blast-radius",
+  "version": "0.3.0",
+  "description": "Shows what a risky shell command would touch, beside Claude Code's own approval prompt.",
+  "author": { "name": "Cody Harris", "url": "https://github.com/VibeCodyH" },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "wrappers": {
+      "type": "string",
+      "title": "Extra command wrappers",
+      "description": "Prefixes to skip before reading the real command (a wrapper script, a token proxy), separated by commas. sudo, nice, timeout, env and command are always skipped",
+      "default": ""
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "prod-tripwire",
+  "version": "0.2.0",
+  "description": "A red PROD band above the prompt while a command touches production, then a dim note of the last prod touch until the next prompt.",
+  "author": { "name": "Cody Harris", "url": "https://github.com/VibeCodyH" },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "patterns": {
+      "type": "string",
+      "title": "Your prod patterns",
+      "description": "label=regex entries separated by ;; (e.g. prod DB=psql .*prod-db;;site=example\\.com). Checked before the built-in ones: db:migrate:prod, neonctl, Vercel --prod, gh pr merge",
+      "default": ""
+    }
+  }
+}

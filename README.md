@@ -1,10 +1,10 @@
 # claude-craft
 
-Hooks, tools, and one skill for [Claude Code](https://claude.com/claude-code), covering the four
+Hooks, tools, one skill, and a set of mods for [Claude Code](https://claude.com/claude-code). The hooks and tools cover the four
 things that quietly cost the most: a memory store that rots, subagent fan-out that eats a usage
 window, bulk work sent to an expensive model, and an agent pushing to a repo it should not.
 
-Zero dependencies, plain Node (18+), ESM.
+Zero dependencies, plain Node (18+), ESM. The [mods](#mods) run inside Claude Code itself.
 
 ## Quick start
 
@@ -48,6 +48,7 @@ Restart Claude Code afterward to pick up the hooks.
 | `protected-repos` | hook | Blocks pushes and PRs on repos where a human runs every push. |
 | `rotate` | hooks | Swaps logins at a usage threshold, via [swappy](https://github.com/PiXeL16/swappy). |
 | `skills` | skill | `delegate`: when to hand work to an executor, and how. |
+| `mods` | `/plugin install`, see [Mods](#mods) | Bands and panes in Claude Code's own UI: blast radius, prod tripwire, PR tracker, usage limits. |
 
 ## Memory
 
@@ -332,6 +333,33 @@ needing to have been active to observe it. If `swappy ls` cannot be read at all 
 to swap rather than guess. Tune via `SWAPPY_GUARD_THRESHOLD`, `SWAPPY_GUARD_COOLDOWN_MIN`,
 `SWAPPY_GUARD_LEDGER`, `SWAPPY_BIN`; test decisions safely with `SWAPPY_GUARD_DRYRUN=1`.
 
+## Mods
+
+Mods hook into Claude Code's own interface: a band above the prompt, a pane beside the approval
+dialog, a tool the model can call. They need Claude Code 2.1.286 or later (mods are early access).
+Install each one by name:
+
+```
+/plugin install usage-band --marketplace VibeCodyH/claude-craft
+```
+
+Answer `y` to add the marketplace, then pick a scope. The options below are `userConfig` fields in
+each mod's `plugin.json`.
+
+| Mod | Does | Options |
+| --- | --- | --- |
+| `blast-radius` | For `rm -r`, `git reset --hard`, `git clean`, force pushes, `branch -D`, discards and `db:migrate:prod`, runs the tools' own dry runs and shows what would be touched beside the approval prompt. It never approves or blocks. | `wrappers`: extra command prefixes to see through, like a wrapper script. |
+| `prod-tripwire` | A red `PROD` band while a command touches production, then a dim "last prod touch" line until your next prompt. Built-in patterns: `db:migrate:prod`, `neonctl`, Vercel `--prod`, `gh pr merge`. | `patterns`: your own `label=regex` entries, separated by `;;`. |
+| `pr-tracker` | Pins the PR the session is babysitting: review verdict, checks, merge state. A PR joins when the session runs `gh pr create`, or `gh pr edit --add-reviewer`, or a `watch-review.sh owner/repo N` watcher line. Needs `gh`. | |
+| `usage-band` | One row above the prompt: Codex weekly limit (from `~/.codex/sessions`), Claude 5-hour and 7-day limits, context left, and a clock. Shows % left with reset countdowns. | `nextFile`: a JSON file with `next_date` and `next_text` to show your next event. Empty hides it. |
+| `needs-you` | Gives Claude `ask` and `resolve` tools. Each question or command it needs from you sits in an amber pill above the prompt, with a copy button, until it's answered. | |
+| `clipboard-step` | When Claude puts a command on your clipboard, shows it above the prompt until you paste it, clear it, or send your next prompt. Wayland only (`wl-copy` / `wl-paste`). | |
+| `yellow-titles` | Draws bold spans in replies in yellow so titles stand out. Display only. | |
+
+For keeping secrets, emails and IPs out of the transcript, use Ray Amjad's
+[secret-redactor](https://github.com/ray-amjad/awesome-claude-code-function-hooks). I run it
+alongside these.
+
 ## Manual install
 
 If you would rather not run the installer, copy what you want and wire it yourself:
@@ -374,6 +402,13 @@ to run fails silently.
 ```bash
 npm test
 npm run bench
+```
+
+Each mod has its own suite:
+
+```bash
+claude plugin validate mods/usage-band
+claude plugin test mods/usage-band
 ```
 
 ## License

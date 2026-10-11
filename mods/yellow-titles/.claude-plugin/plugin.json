@@ -1,0 +1,6 @@
+{
+  "name": "yellow-titles",
+  "version": "0.1.1",
+  "description": "Draws bold spans in Claude's replies in yellow so titles stand out from the body text.",
+  "author": { "name": "Cody Harris", "url": "https://github.com/VibeCodyH" }
+}

@@ -1,0 +1,7 @@
+{
+  "name": "pr-tracker",
+  "version": "0.1.2",
+  "description": "Pins the PR this session is babysitting above the prompt: review verdict, checks, merge state.",
+  "author": { "name": "Cody Harris", "url": "https://github.com/VibeCodyH" },
+  "types": "./types/index.d.ts"
+}

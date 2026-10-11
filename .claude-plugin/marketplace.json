@@ -1,0 +1,38 @@
+{
+  "name": "claude-craft",
+  "description": "Claude Code mods: bands and panes for blast radius, prod commands, PR babysitting and usage limits",
+  "owner": {
+    "name": "Cody Harris",
+    "url": "https://github.com/VibeCodyH"
+  },
+  "plugins": [
+    {
+      "name": "blast-radius",
+      "source": "./mods/blast-radius"
+    },
+    {
+      "name": "clipboard-step",
+      "source": "./mods/clipboard-step"
+    },
+    {
+      "name": "needs-you",
+      "source": "./mods/needs-you"
+    },
+    {
+      "name": "pr-tracker",
+      "source": "./mods/pr-tracker"
+    },
+    {
+      "name": "prod-tripwire",
+      "source": "./mods/prod-tripwire"
+    },
+    {
+      "name": "usage-band",
+      "source": "./mods/usage-band"
+    },
+    {
+      "name": "yellow-titles",
+      "source": "./mods/yellow-titles"
+    }
+  ]
+}
